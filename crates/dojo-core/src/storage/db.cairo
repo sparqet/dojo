@@ -88,4 +88,21 @@ mod Database {
             };
         }
     }
+
+    // returns a tuple of spans, first contains the entity IDs,
+    // second the deserialized entities themselves
+    fn all_ids(class_hash: starknet::ClassHash, component: u250, partition: u250) -> Array::<u250> {
+        let table = {
+            if partition == 0.into() {
+                component
+            } else {
+                let mut serialized = ArrayTrait::new();
+                component.serialize(ref serialized);
+                partition.serialize(ref serialized);
+                let hash = poseidon_hash_span(serialized.span());
+                hash.into()
+            }
+        };
+        Index::query(table)        
+    }
 }

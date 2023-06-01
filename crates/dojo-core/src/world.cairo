@@ -226,6 +226,13 @@ mod World {
         Database::all(class_hash, component.into(), partition)
     }
 
+    // Returns entity IDs that contain the component state.
+    #[view]
+    fn entity_ids(component: ShortString, partition: u250) -> Array<u250> {
+        let class_hash = component_registry::read(component);
+        Database::all_ids(class_hash, component.into(), partition)
+    }
+
     #[external]
     fn set_executor(contract_address: ContractAddress) {
         executor::write(contract_address);
