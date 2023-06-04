@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use async_graphql::dynamic::{Field, FieldFuture, FieldValue, InputValue, TypeRef};
 use async_graphql::{Name, Value};
 use chrono::{DateTime, Utc};
@@ -9,9 +7,10 @@ use sqlx::pool::PoolConnection;
 use sqlx::{FromRow, Pool, Result, Sqlite};
 
 use super::system_call::system_call_by_id;
-use super::types::ScalarType;
-use super::utils::value_accessor::ObjectAccessor;
-use super::{ObjectTraitInstance, ObjectTraitStatic, TypeMapping, ValueMapping};
+use super::{ObjectTrait, TypeMapping, ValueMapping};
+use crate::graphql::types::ScalarType;
+use crate::graphql::utils::extract_value::extract;
+use crate::graphql::utils::remove_quotes;
 
 #[derive(FromRow, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,25 +26,21 @@ pub struct EventObject {
     pub field_type_mapping: TypeMapping,
 }
 
-impl ObjectTraitStatic for EventObject {
-    fn new() -> Self {
+impl EventObject {
+    pub fn new() -> Self {
         Self {
             field_type_mapping: IndexMap::from([
-                (Name::new("id"), TypeRef::ID),
-                (Name::new("keys"), TypeRef::STRING),
-                (Name::new("data"), TypeRef::STRING),
-                (Name::new("systemCallId"), TypeRef::INT),
-                (Name::new("createdAt"), ScalarType::DATE_TIME),
+                (Name::new("id"), TypeRef::ID.to_string()),
+                (Name::new("keys"), TypeRef::STRING.to_string()),
+                (Name::new("data"), TypeRef::STRING.to_string()),
+                (Name::new("systemCallId"), TypeRef::INT.to_string()),
+                (Name::new("createdAt"), ScalarType::DATE_TIME.to_string()),
             ]),
         }
     }
-
-    fn from(field_type_mapping: TypeMapping) -> Self {
-        Self { field_type_mapping }
-    }
 }
 
-impl ObjectTraitInstance for EventObject {
+impl ObjectTrait for EventObject {
     fn name(&self) -> &str {
         "event"
     }
@@ -58,12 +53,12 @@ impl ObjectTraitInstance for EventObject {
         &self.field_type_mapping
     }
 
-    fn field_resolvers(&self) -> Vec<Field> {
+    fn resolvers(&self) -> Vec<Field> {
         vec![
             Field::new(self.name(), TypeRef::named_nn(self.type_name()), |ctx| {
                 FieldFuture::new(async move {
                     let mut conn = ctx.data::<Pool<Sqlite>>()?.acquire().await?;
-                    let id = ctx.args.try_get("id")?.string()?.replace('\"', "");
+                    let id = remove_quotes(ctx.args.try_get("id")?.string()?);
                     let event_values = event_by_id(&mut conn, &id).await?;
 
                     Ok(Some(FieldValue::owned_any(event_values)))
@@ -73,14 +68,12 @@ impl ObjectTraitInstance for EventObject {
         ]
     }
 
-    fn related_fields(&self) -> Option<Vec<Field>> {
+    fn nested_fields(&self) -> Option<Vec<Field>> {
         Some(vec![Field::new("systemCall", TypeRef::named_nn("SystemCall"), |ctx| {
             FieldFuture::new(async move {
                 let mut conn = ctx.data::<Pool<Sqlite>>()?.acquire().await?;
                 let event_values = ctx.parent_value.try_downcast_ref::<ValueMapping>()?;
-
-                let syscall_id =
-                    ObjectAccessor(Cow::Borrowed(event_values)).try_get("system_call_id")?.i64()?;
+                let syscall_id = extract::<i64>(event_values, "system_call_id")?;
                 let system_call = system_call_by_id(&mut conn, syscall_id).await?;
 
                 Ok(Some(FieldValue::owned_any(system_call)))
@@ -90,22 +83,8 @@ impl ObjectTraitInstance for EventObject {
 }
 
 async fn event_by_id(conn: &mut PoolConnection<Sqlite>, id: &str) -> Result<ValueMapping> {
-    let event = sqlx::query_as!(
-        Event,
-        r#"
-            SELECT 
-                id,
-                system_call_id,
-                keys,
-                data,
-                created_at as "created_at: _"
-            FROM events 
-            WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_one(conn)
-    .await?;
+    let event: Event =
+        sqlx::query_as("SELECT * FROM events WHERE id = $1").bind(id).fetch_one(conn).await?;
 
     Ok(value_mapping(event))
 }
